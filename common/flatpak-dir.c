@@ -50,6 +50,7 @@
 #include "flatpak-appdata-private.h"
 #include "flatpak-dir-private.h"
 #include "flatpak-dir-utils-private.h"
+#include "flatpak-gpg-utils.h"
 #include "flatpak-error.h"
 #include "flatpak-locale-utils-private.h"
 #include "flatpak-image-collection-private.h"
@@ -16210,6 +16211,109 @@ strv_contains_prefix (const gchar * const *strv,
   return FALSE;
 }
 
+/* Fetch and validate GPG key updates from the remote's gpg-keys-url.
+ * If reactive is TRUE, performs an unconditional GET (used after GPG
+ * verification failure). Otherwise, uses If-Modified-Since for efficiency. */
+gboolean
+flatpak_dir_update_gpg_keys (FlatpakDir   *self,
+                             const char   *remote_name,
+                             gboolean      reactive,
+                             GCancellable *cancellable,
+                             GError      **error)
+{
+  g_autofree char *gpg_keys_url = NULL;
+  g_autoptr(GBytes) fetched_keys = NULL;
+  g_autoptr(GError) local_error = NULL;
+  FlatpakGpgKeyUpdateCase update_case = FLATPAK_GPG_KEY_UPDATE_NONE;
+  g_autoptr(GBytes) importable_keys = NULL;
+  g_autoptr(GKeyFile) config = NULL;
+  g_autofree char *group = NULL;
+
+  config = ostree_repo_copy_config (self->repo);
+  group = g_strdup_printf ("remote \"%s\"", remote_name);
+  gpg_keys_url = g_key_file_get_string (config, group, "gpg-keys-url", NULL);
+
+  if (gpg_keys_url == NULL || *gpg_keys_url == '\0')
+    {
+      g_debug ("No gpg-keys-url configured for remote %s", remote_name);
+      return TRUE;
+    }
+
+  g_debug ("Fetching GPG key update for remote %s from %s (reactive=%d)",
+           remote_name, gpg_keys_url, reactive);
+
+  ensure_http_session (self);
+
+  fetched_keys = flatpak_load_uri_full (self->http_session, gpg_keys_url,
+                                        NULL, /* certificates */
+                                        FLATPAK_HTTP_FLAGS_NONE,
+                                        NULL, /* auth */
+                                        NULL, /* token */
+                                        NULL, NULL, /* progress */
+                                        NULL, /* out_status */
+                                        NULL, /* out_content_type */
+                                        NULL, /* out_www_authenticate */
+                                        cancellable, &local_error);
+  if (fetched_keys == NULL)
+    {
+      if (g_error_matches (local_error, FLATPAK_HTTP_ERROR, FLATPAK_HTTP_ERROR_NOT_CHANGED))
+        {
+          g_debug ("GPG keys for remote %s: not modified (304)", remote_name);
+          return TRUE;
+        }
+
+      if (!reactive)
+        {
+          /* Proactive path: don't fail loudly on network errors */
+          g_debug ("Failed to fetch GPG keys for remote %s: %s",
+                   remote_name, local_error->message);
+          return TRUE;
+        }
+
+      g_propagate_error (error, g_steal_pointer (&local_error));
+      return FALSE;
+    }
+
+  if (g_bytes_get_size (fetched_keys) == 0)
+    {
+      g_debug ("GPG keys for remote %s: empty response", remote_name);
+      return TRUE;
+    }
+
+  /* Validate the fetched keys against trusted keyring */
+  if (!flatpak_gpg_validate_key_update (self->repo, remote_name,
+                                        fetched_keys,
+                                        &update_case, &importable_keys,
+                                        cancellable, error))
+    return FALSE;
+
+  if (update_case == FLATPAK_GPG_KEY_UPDATE_NONE || importable_keys == NULL)
+    {
+      g_debug ("GPG key update for remote %s: no importable changes", remote_name);
+      return TRUE;
+    }
+
+  /* Import validated keys */
+  {
+    g_autoptr(GInputStream) input_stream = g_memory_input_stream_new_from_bytes (importable_keys);
+    guint imported = 0;
+
+    if (!ostree_repo_remote_gpg_import (self->repo, remote_name, input_stream,
+                                        NULL, &imported, cancellable, error))
+      return FALSE;
+
+    g_debug ("Imported %u GPG key%s to remote \"%s\" (case %s)",
+             imported, (imported == 1) ? "" : "s", remote_name,
+             update_case == FLATPAK_GPG_KEY_UPDATE_IN_PLACE ? "A: in-place" : "B: new primary");
+  }
+
+  /* Clear cached summary since GPG config changed */
+  if (!flatpak_dir_remote_clear_cached_summary (self, remote_name, cancellable, error))
+    return FALSE;
+
+  return TRUE;
+}
+
 gboolean
 flatpak_dir_update_remote_configuration_for_state (FlatpakDir         *self,
                                                    FlatpakRemoteState *remote_state,
@@ -16229,6 +16333,7 @@ flatpak_dir_update_remote_configuration_for_state (FlatpakDir         *self,
     "xa.icon",
     "xa.default-branch",
     "xa.gpg-keys",
+    "xa.gpg-keys-url",
     "xa.redirect-url",
     "xa.authenticator-name",
     "xa.authenticator-install",
@@ -16289,6 +16394,8 @@ flatpak_dir_update_remote_configuration_for_state (FlatpakDir         *self,
                     {
                       if (strcmp (key, "xa.redirect-url") == 0)
                         g_ptr_array_add (updated_params, g_strdup ("url"));
+                      else if (strcmp (key, "xa.gpg-keys-url") == 0)
+                        g_ptr_array_add (updated_params, g_strdup ("gpg-keys-url"));
                       else if (strcmp (key, OSTREE_META_KEY_DEPLOY_COLLECTION_ID) == 0)
                         g_ptr_array_add (updated_params, g_strdup ("collection-id"));
                       else if (strcmp (key, "xa.deploy-collection-id") == 0)
@@ -16363,6 +16470,17 @@ flatpak_dir_update_remote_configuration_for_state (FlatpakDir         *self,
       if (!flatpak_dir_modify_remote (self, remote_state->remote_name, config, gpg_keys, cancellable, error))
         return FALSE;
     }
+
+  /* Proactively check for GPG key updates if gpg-keys-url is configured.
+   * This is best-effort: we don't fail the overall operation if key
+   * update fails (e.g. network error). */
+  {
+    g_autoptr(GError) gpg_update_error = NULL;
+    if (!flatpak_dir_update_gpg_keys (self, remote_state->remote_name, FALSE,
+                                      cancellable, &gpg_update_error))
+      g_debug ("Proactive GPG key update for %s failed: %s",
+               remote_state->remote_name, gpg_update_error->message);
+  }
 
   return TRUE;
 }
@@ -17385,7 +17503,11 @@ static void
   va_list args;
 
   installation = source ? source : flatpak_dir_get_name_cached (self);
+#ifdef USE_SYSTEM_HELPER
   subject = self->subject ? polkit_subject_to_string (self->subject) : g_strdup ("(none)");
+#else
+  subject = g_strdup ("(none)");
+#endif
 
   len = g_snprintf (message, sizeof (message), "%s: ", installation);
 

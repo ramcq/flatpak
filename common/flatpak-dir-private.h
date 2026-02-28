@@ -889,6 +889,11 @@ gboolean              flatpak_dir_modify_remote                             (Fla
                                                                              GBytes                        *gpg_data,
                                                                              GCancellable                  *cancellable,
                                                                              GError                       **error);
+gboolean              flatpak_dir_update_gpg_keys                            (FlatpakDir                    *self,
+                                                                             const char                    *remote_name,
+                                                                             gboolean                       reactive,
+                                                                             GCancellable                  *cancellable,
+                                                                             GError                       **error);
 gboolean              flatpak_dir_remove_remote                             (FlatpakDir                    *self,
                                                                              gboolean                       force_remove,
                                                                              const char                    *remote_name,

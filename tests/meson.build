@@ -293,6 +293,7 @@ subdir('share/xdg-desktop-portal/portals')
 subdir('services')
 subdir('test-keyring')
 subdir('test-keyring2')
+subdir('test-keyring3')
 
 configure_file(
   input : 'package_version.txt.in',
@@ -354,6 +355,7 @@ foreach testcase : wrapped_tests
 
   timeout = {
     'test-bundle.sh' : 60,
+    'test-gpg-update.sh' : 120,
     'test-oci-registry.sh' : 60,
     'test-repo.sh' : 300,
     'test-run.sh' : 90,

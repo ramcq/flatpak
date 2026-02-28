@@ -285,14 +285,30 @@ assert_remote_has_no_config () {
 
 export FL_GPG_HOMEDIR=${TEST_DATA_DIR}/gpghome
 export FL_GPG_HOMEDIR2=${TEST_DATA_DIR}/gpghome2
+export FL_GPG_HOMEDIR3=${TEST_DATA_DIR}/gpghome3
 mkdir -p ${FL_GPG_HOMEDIR}
 mkdir -p ${FL_GPG_HOMEDIR2}
+mkdir -p ${FL_GPG_HOMEDIR3}
 # This need to be writable, so copy the keys
 cp $(dirname $0)/test-keyring/*.gpg ${FL_GPG_HOMEDIR}/
 cp $(dirname $0)/test-keyring2/*.gpg ${FL_GPG_HOMEDIR2}/
+# test-keyring3 uses exported key files, not the legacy pubring.gpg format.
+# Copy key files so they're accessible for --gpg-import and serving via HTTP.
+cp $(dirname $0)/test-keyring3/*.gpg ${FL_GPG_HOMEDIR3}/ 2>/dev/null || true
+# Import secret keys into the GPG homedir so flatpak can sign with them.
+for keyfile in $(dirname $0)/test-keyring3/*.sec.gpg; do
+    if [ -f "${keyfile}" ]; then
+        gpg --homedir=${FL_GPG_HOMEDIR3} --batch --import "${keyfile}" 2>/dev/null || true
+    fi
+done
 
 export FL_GPG_ID=7B0961FD
 export FL_GPG_ID2=B2314EFC
+
+# GPG key update test keyring IDs (from test-keyring3/key-ids.txt)
+if [ -f $(dirname $0)/test-keyring3/key-ids.txt ]; then
+    source $(dirname $0)/test-keyring3/key-ids.txt
+fi
 export FL_GPGARGS="--gpg-homedir=${FL_GPG_HOMEDIR} --gpg-sign=${FL_GPG_ID}"
 export FL_GPGARGS2="--gpg-homedir=${FL_GPG_HOMEDIR2} --gpg-sign=${FL_GPG_ID2}"
 export FL_GPGCMDARGS="--homedir ${FL_GPG_HOMEDIR} -u ${FL_GPG_ID}"
