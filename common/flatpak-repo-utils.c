@@ -256,6 +256,26 @@ flatpak_repo_set_gpg_keys (OstreeRepo *repo,
 }
 
 gboolean
+flatpak_repo_set_gpg_keys_url (OstreeRepo *repo,
+                               const char *url,
+                               GError    **error)
+{
+  g_autoptr(GKeyFile) config = NULL;
+
+  config = ostree_repo_copy_config (repo);
+
+  if (url)
+    g_key_file_set_string (config, "flatpak", "gpg-keys-url", url);
+  else
+    g_key_file_remove_key (config, "flatpak", "gpg-keys-url", NULL);
+
+  if (!ostree_repo_write_config (repo, config, error))
+    return FALSE;
+
+  return TRUE;
+}
+
+gboolean
 flatpak_repo_set_default_branch (OstreeRepo *repo,
                                  const char *branch,
                                  GError    **error)
@@ -1851,6 +1871,14 @@ add_summary_metadata (OstreeRepo   *repo,
                              g_variant_new_from_data (G_VARIANT_TYPE ("ay"), decoded, decoded_len,
                                                       TRUE, (GDestroyNotify) g_free, decoded));
     }
+
+  {
+    g_autofree char *gpg_keys_url = NULL;
+    gpg_keys_url = g_key_file_get_value (config, "flatpak", "gpg-keys-url", NULL);
+    if (gpg_keys_url != NULL && *gpg_keys_url != '\0')
+      g_variant_builder_add (metadata_builder, "{sv}", "xa.gpg-keys-url",
+                             g_variant_new_string (gpg_keys_url));
+  }
 }
 
 static char *
@@ -2961,6 +2989,14 @@ flatpak_parse_repofile (const char   *remote_name,
                                                                FLATPAK_REPO_AUTHENTICATOR_INSTALL_KEY, NULL);
       g_key_file_set_boolean (config, group, "xa.authenticator-install", authenticator_install);
     }
+
+  {
+    g_autofree char *gpg_keys_url = NULL;
+    gpg_keys_url = g_key_file_get_string (keyfile, source_group,
+                                          FLATPAK_REPO_GPGKEYSURL_KEY, NULL);
+    if (gpg_keys_url != NULL)
+      g_key_file_set_string (config, group, "gpg-keys-url", gpg_keys_url);
+  }
 
   comment = g_key_file_get_string (keyfile, FLATPAK_REPO_GROUP,
                                    FLATPAK_REPO_COMMENT_KEY, NULL);

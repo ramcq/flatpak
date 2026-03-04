@@ -31,6 +31,7 @@
 
 #include "flatpak-builtins.h"
 #include "flatpak-builtins-utils.h"
+#include "flatpak-dir-private.h"
 #include "flatpak-utils-private.h"
 
 static gboolean opt_no_gpg_verify;
@@ -61,6 +62,7 @@ static char **opt_authenticator_options = NULL;
 static gboolean opt_authenticator_install = -1;
 static char **opt_gpg_import;
 static char *opt_signature_lookaside = NULL;
+static gboolean opt_gpg_update_keys;
 
 
 static GOptionEntry modify_options[] = {
@@ -88,6 +90,7 @@ static GOptionEntry common_options[] = {
   { "collection-id", 0, 0, G_OPTION_ARG_STRING, &opt_collection_id, N_("Collection ID"), N_("COLLECTION-ID") },
   { "gpg-import", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_gpg_import, N_("Import GPG key from FILE (- for stdin)"), N_("FILE") },
   { "signature-lookaside", 0, 0, G_OPTION_ARG_STRING, &opt_signature_lookaside, N_("Load signatures from URL"), N_("URL") },
+  { "gpg-update-keys", 0, 0, G_OPTION_ARG_NONE, &opt_gpg_update_keys, N_("Fetch and import updated GPG keys from the remote's key URL"), NULL },
   { "no-filter", 0, 0, G_OPTION_ARG_NONE, &opt_no_filter, N_("Disable local filter"), NULL },
   { "filter", 0, 0, G_OPTION_ARG_FILENAME, &opt_filter, N_("Set path to local filter FILE"), N_("FILE") },
   { "disable", 0, 0, G_OPTION_ARG_NONE, &opt_disable, N_("Disable the remote"), NULL },
@@ -349,10 +352,20 @@ flatpak_builtin_remote_modify (int argc, char **argv, GCancellable *cancellable,
       changed = TRUE;
     }
 
-  if (!changed)
-    return TRUE;
+  if (changed)
+    {
+      if (!flatpak_dir_modify_remote (preferred_dir, remote_name, config, gpg_data, cancellable, error))
+        return FALSE;
+    }
 
-  return flatpak_dir_modify_remote (preferred_dir, remote_name, config, gpg_data, cancellable, error);
+  if (opt_gpg_update_keys)
+    {
+      g_print (_("Fetching updated GPG keys for %s\n"), remote_name);
+      if (!flatpak_dir_update_gpg_keys (preferred_dir, remote_name, TRUE, cancellable, error))
+        return FALSE;
+    }
+
+  return TRUE;
 }
 
 gboolean

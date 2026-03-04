@@ -72,6 +72,7 @@
 #define FLATPAK_REPO_FILTER_KEY "Filter"
 #define FLATPAK_REPO_AUTHENTICATOR_NAME_KEY "AuthenticatorName"
 #define FLATPAK_REPO_AUTHENTICATOR_INSTALL_KEY "AuthenticatorInstall"
+#define FLATPAK_REPO_GPGKEYSURL_KEY "GPGKeysUrl"
 
 #define FLATPAK_REPO_COLLECTION_ID_KEY "CollectionID"
 #define FLATPAK_REPO_DEPLOY_COLLECTION_ID_KEY "DeployCollectionID"
@@ -131,6 +132,9 @@ guint    flatpak_repo_get_summary_history_length (OstreeRepo *repo);
 gboolean flatpak_repo_set_gpg_keys (OstreeRepo *repo,
                                     GBytes     *bytes,
                                     GError    **error);
+gboolean flatpak_repo_set_gpg_keys_url (OstreeRepo *repo,
+                                        const char *url,
+                                        GError    **error);
 
 gboolean flatpak_repo_collect_sizes (OstreeRepo   *repo,
                                      GFile        *root,

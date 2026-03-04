@@ -194,6 +194,7 @@ sources = [
   'flatpak-installation.c',
   'flatpak-installed-ref.c',
   'flatpak-instance.c',
+  'flatpak-gpg-utils.c',
   'flatpak-json-oci.c',
   'flatpak-json.c',
   'flatpak-locale-utils.c',
